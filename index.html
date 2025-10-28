@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Test Spline Scroll Displace</title>
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 200vh; /* On crée de la hauteur pour scroller */
+      background: #111;
+      overflow-x: hidden;
+    }
+
+    #spline-container {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 10;
+    }
+
+    canvas#spline {
+      width: 100%;
+      height: 100%;
+      display: block;
+      pointer-events: auto;
+      touch-action: none;
+    }
+
+    h1 {
+      position: absolute;
+      top: 5%;
+      width: 100%;
+      text-align: center;
+      font-family: sans-serif;
+      color: white;
+      letter-spacing: 2px;
+      z-index: 20;
+    }
+
+    p {
+      position: absolute;
+      bottom: 10%;
+      width: 100%;
+      text-align: center;
+      color: white;
+      font-family: sans-serif;
+      opacity: 0.5;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="spline-container">
+    <canvas id="spline"></canvas>
+  </div>
+
+  <h1>🌀 Scroll pour déformer la sphère 🌀</h1>
+  <p>Quand tu scrolles, la couche “Displace” s’amplifie puis revient à zéro</p>
+
+  <script type="module">
+    import { Application } from "https://unpkg.com/@splinetool/runtime@latest/build/runtime.js";
+
+    const canvas = document.getElementById("spline");
+    const app = new Application(canvas);
+
+    // Charge ta scène Spline (celle que tu m’as donnée)
+    await app.load("https://prod.spline.design/4133RaD3YjkKp650/scene.splinecode");
+
+    // Trouve la sphère (par nom ou matériau)
+    const sphere = app.findObjectByName("Sphere") || app.scene.children.find(o => o.material);
+
+    // Variables pour l’effet scroll
+    let energy = 0;
+    let lastScrollY = window.scrollY;
+    let lastScrollAt = 0;
+
+    // Réglages de sensibilité
+    const GAIN = 0.02;   // ↑ pour un effet plus fort
+    const DECAY = 0.03;  // ↑ pour un retour plus rapide
+    const IDLE = 100;    // ms sans scroll avant retour
+    const MAX = 1;       // limite du strength
+
+    window.addEventListener("scroll", () => {
+      const dy = Math.abs(window.scrollY - lastScrollY);
+      lastScrollY = window.scrollY;
+
+      energy = Math.min(MAX, energy + dy * GAIN);
+      lastScrollAt = performance.now();
+    }, { passive: true });
+
+    // Animation continue
+    function animate() {
+      if (performance.now() - lastScrollAt > IDLE && energy > 0) {
+        energy = Math.max(0, energy - DECAY);
+      }
+
+      // Mise à jour de la Strength sur la couche Displace
+      if (sphere?.material?.displace?.length) {
+        // Si tu n’as qu’une couche Displace :
+        sphere.material.displace[0].strength = energy;
+
+        // Si tu en as deux, active la deuxième :
+        // sphere.material.displace[1].strength = energy;
+      }
+
+      requestAnimationFrame(animate);
+    }
+    animate();
+
+    // Ajuste le DPI (optionnel)
+    const resize = () => {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = canvas.clientWidth * dpr;
+      canvas.height = canvas.clientHeight * dpr;
+    };
+    resize();
+    window.addEventListener("resize", resize);
+  </script>
+</body>
+</html>
