@@ -1,124 +1,55 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Test Spline Scroll Displace</title>
+<div style="width:100%;height:100vh;overflow:hidden;">
+  <canvas id="spline-canvas" style="width:100%;height:100%;display:block;"></canvas>
+</div>
 
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      height: 200vh; /* On crée de la hauteur pour scroller */
-      background: #111;
-      overflow-x: hidden;
+<script type="module">
+  import { Application } from 'https://cdn.jsdelivr.net/npm/@splinetool/runtime@1.9.59/build/runtime.js';
+
+  const canvas = document.getElementById('spline-canvas');
+  const app = new Application(canvas);
+  await app.load('https://prod.spline.design/GXgGQ9ASqli6eO3Q/scene.splinecode');
+
+  const MIN = -50, MAX = 50;
+  const REST = 1;
+  const SCROLL_SENS = 0.003;
+  const FOLLOW_RATE = 6;
+  const RETURN_RATE = 16;
+  const IDLE_DELAY_MS = 80;
+
+  let gravity = Number(app.getVariable('gravity')) || REST;
+  let targetGravity = gravity;
+  let lastWheelTs = 0;
+
+  const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+  const approach = (cur,tgt,rate,dt)=>{
+    const k = 1 - Math.exp(-rate * dt);
+    return cur + (tgt - cur) * k;
+  };
+
+  window.addEventListener('wheel', (e) => {
+    lastWheelTs = performance.now();
+    const delta = e.deltaY * SCROLL_SENS;
+    targetGravity = clamp(targetGravity + delta, MIN, MAX);
+  }, { passive: true });
+
+  let last = performance.now();
+  function tick(now){
+    const dt = Math.min(0.033, (now - last) / 1000);
+    last = now;
+    const idle = (now - lastWheelTs) > IDLE_DELAY_MS;
+    if (idle) targetGravity = REST;
+    gravity = approach(gravity, targetGravity, idle ? RETURN_RATE : FOLLOW_RATE, dt);
+    if (idle && Math.abs(gravity - REST) < 0.001) gravity = REST;
+    app.setVariable('gravity', gravity);
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+
+  const ro = new ResizeObserver(entries=>{
+    for(const e of entries){
+      const cr = e.contentRect;
+      app.setSize(cr.width, cr.height);
     }
-
-    #spline-container {
-      position: fixed;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      z-index: 10;
-    }
-
-    canvas#spline {
-      width: 100%;
-      height: 100%;
-      display: block;
-      pointer-events: auto;
-      touch-action: none;
-    }
-
-    h1 {
-      position: absolute;
-      top: 5%;
-      width: 100%;
-      text-align: center;
-      font-family: sans-serif;
-      color: white;
-      letter-spacing: 2px;
-      z-index: 20;
-    }
-
-    p {
-      position: absolute;
-      bottom: 10%;
-      width: 100%;
-      text-align: center;
-      color: white;
-      font-family: sans-serif;
-      opacity: 0.5;
-    }
-  </style>
-</head>
-
-<body>
-  <div id="spline-container">
-    <canvas id="spline"></canvas>
-  </div>
-
-  <h1>🌀 Scroll pour déformer la sphère 🌀</h1>
-  <p>Quand tu scrolles, la couche “Displace” s’amplifie puis revient à zéro</p>
-
-  <script type="module">
-    import { Application } from "https://unpkg.com/@splinetool/runtime@latest/build/runtime.js";
-
-    const canvas = document.getElementById("spline");
-    const app = new Application(canvas);
-
-    // Charge ta scène Spline (celle que tu m’as donnée)
-    await app.load("https://prod.spline.design/4133RaD3YjkKp650/scene.splinecode");
-
-    // Trouve la sphère (par nom ou matériau)
-    const sphere = app.findObjectByName("Sphere") || app.scene.children.find(o => o.material);
-
-    // Variables pour l’effet scroll
-    let energy = 0;
-    let lastScrollY = window.scrollY;
-    let lastScrollAt = 0;
-
-    // Réglages de sensibilité
-    const GAIN = 0.02;   // ↑ pour un effet plus fort
-    const DECAY = 0.03;  // ↑ pour un retour plus rapide
-    const IDLE = 100;    // ms sans scroll avant retour
-    const MAX = 1;       // limite du strength
-
-    window.addEventListener("scroll", () => {
-      const dy = Math.abs(window.scrollY - lastScrollY);
-      lastScrollY = window.scrollY;
-
-      energy = Math.min(MAX, energy + dy * GAIN);
-      lastScrollAt = performance.now();
-    }, { passive: true });
-
-    // Animation continue
-    function animate() {
-      if (performance.now() - lastScrollAt > IDLE && energy > 0) {
-        energy = Math.max(0, energy - DECAY);
-      }
-
-      // Mise à jour de la Strength sur la couche Displace
-      if (sphere?.material?.displace?.length) {
-        // Si tu n’as qu’une couche Displace :
-        sphere.material.displace[0].strength = energy;
-
-        // Si tu en as deux, active la deuxième :
-        // sphere.material.displace[1].strength = energy;
-      }
-
-      requestAnimationFrame(animate);
-    }
-    animate();
-
-    // Ajuste le DPI (optionnel)
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = canvas.clientWidth * dpr;
-      canvas.height = canvas.clientHeight * dpr;
-    };
-    resize();
-    window.addEventListener("resize", resize);
-  </script>
-</body>
-</html>
+  });
+  ro.observe(canvas.parentElement);
+</script>
