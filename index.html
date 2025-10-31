@@ -1,55 +1,157 @@
-<div style="width:100%;height:100vh;overflow:hidden;">
-  <canvas id="spline-canvas" style="width:100%;height:100%;display:block;"></canvas>
-</div>
-
-<script type="module">
-  import { Application } from 'https://cdn.jsdelivr.net/npm/@splinetool/runtime@1.9.59/build/runtime.js';
-
-  const canvas = document.getElementById('spline-canvas');
-  const app = new Application(canvas);
-  await app.load('https://prod.spline.design/GXgGQ9ASqli6eO3Q/scene.splinecode');
-
-  const MIN = -50, MAX = 50;
-  const REST = 1;
-  const SCROLL_SENS = 0.003;
-  const FOLLOW_RATE = 6;
-  const RETURN_RATE = 16;
-  const IDLE_DELAY_MS = 80;
-
-  let gravity = Number(app.getVariable('gravity')) || REST;
-  let targetGravity = gravity;
-  let lastWheelTs = 0;
-
-  const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
-  const approach = (cur,tgt,rate,dt)=>{
-    const k = 1 - Math.exp(-rate * dt);
-    return cur + (tgt - cur) * k;
-  };
-
-  window.addEventListener('wheel', (e) => {
-    lastWheelTs = performance.now();
-    const delta = e.deltaY * SCROLL_SENS;
-    targetGravity = clamp(targetGravity + delta, MIN, MAX);
-  }, { passive: true });
-
-  let last = performance.now();
-  function tick(now){
-    const dt = Math.min(0.033, (now - last) / 1000);
-    last = now;
-    const idle = (now - lastWheelTs) > IDLE_DELAY_MS;
-    if (idle) targetGravity = REST;
-    gravity = approach(gravity, targetGravity, idle ? RETURN_RATE : FOLLOW_RATE, dt);
-    if (idle && Math.abs(gravity - REST) < 0.001) gravity = REST;
-    app.setVariable('gravity', gravity);
-    requestAnimationFrame(tick);
-  }
-  requestAnimationFrame(tick);
-
-  const ro = new ResizeObserver(entries=>{
-    for(const e of entries){
-      const cr = e.contentRect;
-      app.setSize(cr.width, cr.height);
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+  <title>Spline Interactive Scene</title>
+  <style>
+    html, body { margin:0; padding:0; height:100%; background:#000; overscroll-behavior:none; }
+    #spline-viewport { position:fixed; inset:0; overflow:hidden; }
+    #spline-canvas {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%) scale(var(--sx, 1));
+      transform-origin: 50% 50%;
+      height: 100%;
+      width: auto;
+      touch-action: pan-y;
     }
-  });
-  ro.observe(canvas.parentElement);
-</script>
+  </style>
+</head>
+<body>
+  <div id="spline-viewport">
+    <canvas id="spline-canvas"></canvas>
+  </div>
+
+  <script type="module">
+    import { Application } from 'https://cdn.jsdelivr.net/npm/@splinetool/runtime@1.9.59/build/runtime.js';
+
+    // ====== CONFIGURATION ======
+    const CONFIG = {
+      sceneUrl: 'https://prod.spline.design/GXgGQ9ASqli6eO3Q/scene.splinecode',
+      aspectRatio: 16 / 9,
+      fitGroupName: 'UI_FIT',
+      sideMargin: 0.08,
+      minShrink: 0.5,
+      scroll: {
+        min: -50,
+        max: 50,
+        rest: 1,
+        sensitivity: 0.004,
+        followRate: 10,
+        returnRate: 18,
+        idleDelayMs: 60,
+      }
+    };
+
+    // ====== INITIALISATION ======
+    const canvas = document.getElementById('spline-canvas');
+    canvas.style.aspectRatio = String(CONFIG.aspectRatio);
+
+    const app = new Application(canvas);
+    await app.load(CONFIG.sceneUrl);
+
+    const fitGroup = app.findObjectByName(CONFIG.fitGroupName);
+    const baseScale = fitGroup ? { ...fitGroup.scale } : { x: 1, y: 1, z: 1 };
+
+    // ====== GESTION DU LAYOUT ======
+    function relayout() {
+      const vv = window.visualViewport;
+      const frameW = vv?.width ?? window.innerWidth;
+      const frameH = vv?.height ?? window.innerHeight;
+
+      // 1. Dimensionner le canvas (cover par la hauteur)
+      const cssH = Math.round(frameH);
+      const cssW = Math.round(cssH * CONFIG.aspectRatio);
+      canvas.style.height = `${cssH}px`;
+      canvas.style.width = `${cssW}px`;
+
+      const dpr = Math.min(window.devicePixelRatio, 2);
+      app.setSize(cssW, cssH, dpr);
+
+      // 2. Calculer et appliquer le shrink
+      const visibleRatio = Math.min(1, frameW / cssW);
+      const s = Math.max(CONFIG.minShrink, Math.min(1, visibleRatio * (1 - CONFIG.sideMargin)));
+
+      if (fitGroup) {
+        fitGroup.scale.x = baseScale.x * s;
+        fitGroup.scale.y = baseScale.y * s;
+        fitGroup.scale.z = baseScale.z * s;
+        canvas.style.removeProperty('--sx');
+      } else {
+        canvas.style.setProperty('--sx', String(s));
+      }
+    }
+
+    // ====== GESTION DES INTERACTIONS (SCROLL, TOUCH, ETC.) ======
+    const prefersReducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const motionFactor = prefersReducedMotion ? 0.5 : 1;
+    let gravity = Number(app.getVariable('gravity')) || CONFIG.scroll.rest;
+    let targetGravity = gravity;
+    let lastInputTs = 0;
+
+    const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+    const approach = (current, target, rate, dt) => current + (target - current) * (1 - Math.exp(-rate * dt));
+
+    function handleInput(delta) {
+      if (Math.abs(delta) < 0.001) return;
+      lastInputTs = performance.now();
+      const { min, max } = CONFIG.scroll;
+      targetGravity = clamp(targetGravity + delta, min, max);
+    }
+
+    let lastScrollY = window.scrollY;
+    window.addEventListener('scroll', () => {
+      const delta = (window.scrollY - lastScrollY) * CONFIG.scroll.sensitivity * motionFactor;
+      lastScrollY = window.scrollY;
+      handleInput(delta);
+    }, { passive: true });
+
+    window.addEventListener('wheel', (e) => {
+      const delta = e.deltaY * CONFIG.scroll.sensitivity * motionFactor;
+      handleInput(delta);
+    }, { passive: true });
+
+    let lastTouchY = 0;
+    canvas.addEventListener('touchstart', (e) => { lastTouchY = e.touches[0].clientY; }, { passive: true });
+    canvas.addEventListener('touchmove', (e) => {
+      const delta = (lastTouchY - e.touches[0].clientY) * CONFIG.scroll.sensitivity * motionFactor;
+      lastTouchY = e.touches[0].clientY;
+      handleInput(delta);
+    }, { passive: true });
+
+
+    // ====== BOUCLE D'ANIMATION ======
+    let lastTime = performance.now();
+    function tick(now) {
+      const dt = Math.min(0.033, (now - lastTime) / 1000);
+      lastTime = now;
+
+      const isIdle = (now - lastInputTs) > CONFIG.scroll.idleDelayMs;
+      if (isIdle) {
+        targetGravity = CONFIG.scroll.rest;
+      }
+      
+      const rate = isIdle ? CONFIG.scroll.returnRate : CONFIG.scroll.followRate;
+      gravity = approach(gravity, targetGravity, rate, dt);
+
+      // Optimisation: ne pas mettre à jour si la valeur est stable
+      if (Math.abs(gravity - app.getVariable('gravity')) > 1e-4) {
+        app.setVariable('gravity', gravity);
+      }
+
+      requestAnimationFrame(tick);
+    }
+
+    // ====== DÉMARRAGE ======
+    ['resize', 'orientationchange'].forEach(evt => window.addEventListener(evt, relayout));
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', relayout);
+    new ResizeObserver(relayout).observe(document.documentElement);
+
+    relayout();
+    requestAnimationFrame(tick);
+
+  </script>
+</body>
+</html>
